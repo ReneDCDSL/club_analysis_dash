@@ -1,0 +1,9 @@
+Questions:
+    How well can I predict a player's market value ?
+        Use player characteristics, current club, nb of appearance in last season, agent name..
+    Can I predict the outcome of a game ?
+        Use team composition, club ranking, players market value, referee..
+    Cluster club proximity looking at players transfer history
+    Predict next season final points in ranking
+    
+    
