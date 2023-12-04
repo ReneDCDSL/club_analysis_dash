@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
@@ -9,19 +10,28 @@ df_clubs = pd.read_csv("./data/clubs.csv")
 df_competitions = pd.read_csv("./data/competitions.csv")
 df_player_valuations = pd.read_csv("./data/player_valuations.csv")
 df_players = pd.read_csv("./data/players.csv")
+df_appearances = pd.read_csv('./data/appearances.csv')
 
 # Merge the club data with the competition data
 df_merged = pd.merge(df_clubs, df_competitions[['competition_id', 'country_name']], how='left', left_on='domestic_competition_id', right_on='competition_id')
 
-# Merge the club data with the competition data
-df_merged = pd.merge(df_merged, df_players[df_players['last_season'] == 2023][['current_club_id', 'date_of_birth', 'player_id']], how='left', left_on='club_id', right_on='current_club_id')
+# Merge the player information
+df_merged = pd.merge(df_merged, df_players[df_players['last_season'] == 2023][['current_club_id', 'name', 'date_of_birth', 'player_id']], how='left', left_on='club_id', right_on='current_club_id', suffixes=('_club','_player'))
 
 # Merge with player valuations for the selected season (e.g., last_season = 2023)
 df_merged = pd.merge(df_merged, df_player_valuations[df_player_valuations['last_season'] == 2023][['market_value_in_eur', 'player_id']], how='left', left_on='player_id', right_on='player_id')
 
 # Calculate age based on date of birth
 df_merged['dob'] = pd.to_datetime(df_merged['date_of_birth'])
-df_merged['age'] = (datetime.now() - df_merged['dob']).dt.days
+df_merged['age'] = np.round((datetime.now() - df_merged['dob']).dt.days/365, 2)
+
+# Compute the total market value based on individual player market value
+total_market_value_per_club = df_merged.groupby('name_club').agg({'market_value_in_eur': 'sum'}).reset_index()
+avg_minutes_played = df_appearances.groupby('player_id').agg(avg_played_minutes=('minutes_played', 'mean'), total_played_minutes=('minutes_played','sum')).reset_index()
+
+df_merged['market_value_in_eur'] = df_merged['market_value_in_eur'].fillna(0)
+
+df_merged = pd.merge(df_merged, avg_minutes_played[['avg_played_minutes', 'total_played_minutes', 'player_id']], how='left', left_on='player_id', right_on='player_id')
 
 
 # Set app title and description
@@ -39,7 +49,7 @@ selected_competition = st.sidebar.selectbox("Select Competition", competitions_i
 filtered_df = df_merged[(df_merged['country_name'] == selected_country) & (df_merged['domestic_competition_id'] == selected_competition)]
 
 # Sidebar: Club Selection
-selected_clubs = st.sidebar.multiselect("Select Clubs", filtered_df['name'].unique())
+selected_clubs = st.sidebar.multiselect("Select Clubs", filtered_df['name_club'].unique())
 
 # Sidebar: Metrics Selection
 selected_metrics = st.sidebar.multiselect(
@@ -54,7 +64,7 @@ st.header("Player Market Value Analysis")
 if selected_clubs:
     for club in selected_clubs:
         # Create a DataFrame for the current club
-        club_data = filtered_df[filtered_df['name'] == club]
+        club_data = filtered_df[filtered_df['name_club'] == club]
 
         # Plotly Express Box Plot for player market value
         fig = px.bar(
@@ -81,7 +91,7 @@ st.header("Club Comparison")
 if selected_clubs and selected_metrics:
     for club in selected_clubs:
         st.subheader(f"{club} Statistics:")
-        club_data = filtered_df[filtered_df['name'] == club]
+        club_data = filtered_df[filtered_df['name_club'] == club]
         summary_stats = pd.DataFrame({
             'Metric': selected_metrics,
             'Mean': [club_data[metric].mean() for metric in selected_metrics],
@@ -104,20 +114,35 @@ else:
 
 
 # Comparison Section -------------------- SCATTER
+st.write(filtered_df['market_value_in_eur'].describe())
+
+
+total_market_value_per_club
+
 st.header("Club Comparison -- SCATTER")
-if selected_clubs:
-    # Plotly Express Scatter Plot for comparison
-    fig = px.scatter(
-        filtered_df,
-        x="squad_size",
-        y="age",
-        color="name",
-        size="market_value_in_eur",
-        title="Club Comparison",log_x=True, size_max=60
-    )
-    st.plotly_chart(fig)
-else:
-    st.warning("Select at least one club for comparison.")
+
+fig = px.scatter(
+    filtered_df,
+    x="avg_played_minutes",
+    y="age",
+    color="name_player",
+    size="market_value_in_eur",
+    title="Club Comparison",
+    log_x=True
+)
+st.plotly_chart(fig)
+
+
+fig = px.scatter(
+    filtered_df,
+    x="total_played_minutes",
+    y="age",
+    color="name_club",
+    size="market_value_in_eur",
+    title="Club Comparison",
+    log_x=True
+)
+st.plotly_chart(fig)
 
 # Seasonal Performance Section
 st.header("Seasonal Performance")
@@ -140,23 +165,6 @@ if "latitude" in df_clubs.columns and "longitude" in df_clubs.columns:
 else:
     st.warning("Geographical data not available for selected clubs.")
 
-# Transfer Market Analysis Section
-st.header("Transfer Market Analysis")
-# Assuming you have a DataFrame df_transfer_market_analysis with transfer data
-# Display a bar chart or other relevant visualization
-if "net_transfer_record" in df_clubs.columns:
-    fig_transfer = px.bar(
-        filtered_df,
-        x="name",
-        y="net_transfer_record",
-        color="name",
-        title="Net Transfer Record",
-        labels={"net_transfer_record": "Net Transfer Record"},
-        template="plotly",
-    )
-    st.plotly_chart(fig_transfer)
-else:
-    st.warning("Transfer data not available for selected clubs.")
 
 # Coach Analysis Section
 st.header("Coach Analysis")
@@ -164,7 +172,7 @@ st.header("Coach Analysis")
 # Display relevant coach information
 if "coach_name" in df_clubs.columns:
     st.write("Current Coaches of Selected Clubs:")
-    st.write(filtered_df[["name", "coach_name"]].drop_duplicates())
+    st.write(filtered_df[["name_club", "coach_name"]].drop_duplicates())
 else:
     st.warning("Coach data not available for selected clubs.")
 
